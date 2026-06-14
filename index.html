@@ -116,7 +116,7 @@ tfoot td:first-child{background:#F4F6FD}
           <button id="g-day" onclick="setGran('day')">Daily</button>
         </div>
         <span class="spacer"></span>
-        <button class="btn ghost" onclick="load()">Refresh</button>
+        <button class="btn ghost" id="refreshBtn" onclick="doRefresh()">Refresh</button>
       </div>
 
       <div class="kpis" id="kpis"></div>
@@ -143,6 +143,8 @@ tfoot td:first-child{background:#F4F6FD}
 <script>
 // ====== set this to your published file ======
 const DATA_URL = "https://retecapi.blob.core.windows.net/footfall-public/footfall.json";   // e.g. "https://retecapi.blob.core.windows.net/footfall-public/footfall.json"
+// ====== optional: live on-click rebuild endpoint (Function App) ======
+const REFRESH_URL = "https://edyfi-retec-fn1.azurewebsites.net/api/refresh"; // e.g. "https://edyfi-retec-fn1.azurewebsites.net/api/refresh"
 // =============================================
 const C={blue:"#2E3BED",sky:"#0087C1",amber:"#FFB600",muted:"#6B7194"};
 let DATA=null, GRAN="hour", chHour=null;
@@ -167,9 +169,14 @@ function sampleData(){
   return {generated:new Date().toISOString(),sensors,rows,sample:true};
 }
 
-async function load(){
+function gv(id){return document.getElementById(id).value;}
+
+async function load(live){
+  const first=!DATA;
+  const keep=first?null:{loc:gv("loc"),sensor:gv("sensor"),from:gv("from"),to:gv("to")};
   try{
-    if(DATA_URL){ const r=await fetch(DATA_URL,{cache:"no-store"}); if(!r.ok) throw new Error("HTTP "+r.status); DATA=await r.json(); DATA.sample=false; }
+    const url=(live&&REFRESH_URL)?REFRESH_URL:DATA_URL;
+    if(url){ const r=await fetch(url,{cache:"no-store"}); if(!r.ok) throw new Error("HTTP "+r.status); DATA=await r.json(); DATA.sample=false; }
     else { DATA=sampleData(); }
   }catch(e){ DATA=sampleData(); DATA.loadError=e.message; }
   document.getElementById("warn").style.display=DATA.sample?"block":"none";
@@ -182,12 +189,27 @@ async function load(){
   locSel.innerHTML='<option value="__all">All locations</option>'+locs.map(([id,nm])=>`<option value="${id}">${nm}</option>`).join("");
 
   const dates=DATA.rows.map(r=>r.t.slice(0,10)).sort();
-  const min=dates[0],max=dates[dates.length-1];
+  const min=dates[0]||"",max=dates[dates.length-1]||"";
   const f=document.getElementById("from"),t=document.getElementById("to");
   f.min=t.min=min; f.max=t.max=max;
-  const d=new Date(max); d.setDate(d.getDate()-6); const lo=d.toISOString().slice(0,10);
-  f.value=lo<min?min:lo; t.value=max;
+  if(first){
+    const d=new Date(max); d.setDate(d.getDate()-6); const lo=d.toISOString().slice(0,10);
+    f.value=(lo<min?min:lo)||min; t.value=max;
+  } else if(keep){                         // keep the user's selections across a refresh
+    if([...locSel.options].some(o=>o.value===keep.loc)) locSel.value=keep.loc;
+    if(keep.from) f.value=keep.from; if(keep.to) t.value=keep.to;
+  }
   onLoc();
+  if(!first && keep){
+    const ss=document.getElementById("sensor");
+    if([...ss.options].some(o=>o.value===keep.sensor)){ ss.value=keep.sensor; render(); }
+  }
+}
+
+async function doRefresh(){
+  const b=document.getElementById("refreshBtn"), t=b.textContent;
+  b.textContent="Refreshing…"; b.disabled=true;
+  try{ await load(true); } finally { b.textContent=t; b.disabled=false; }
 }
 
 function activeSensors(){
